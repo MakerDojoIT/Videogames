@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <title>NEON FLOW - Definitive Edition</title>
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser-arcade-physics.min.js"></script>
+    <style>
+        body { margin: 0; background-color: #030308; color: white; font-family: 'Arial Black'; display: flex; justify-content: center; align-items: center; height: 100vh; overflow: hidden; }
+        #ui-wrapper { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+        #game-container { border: 4px solid #ffffff; box-shadow: 0 0 70px rgba(0, 255, 255, 0.4); border-radius: 28px; overflow: hidden; background: #000; }
+        #punteggio-esterno { font-size: 26px; color: #00ffff; text-shadow: 0 0 15px rgba(0, 255, 255, 0.7); margin-top: 5px; min-height: 35px; visibility: hidden; }
+        .credits { font-size: 14px; color: #4facfe; text-transform: uppercase; letter-spacing: 3px; opacity: 0.9; text-shadow: 0 0 5px rgba(79, 172, 254, 0.5); }
+    </style>
+</head>
+<body>
+
+    <div id="ui-wrapper">
+        <div id="game-container"></div>
+        <div id="punteggio-esterno"></div>
+        <div class="credits">Creato Da: Lorenzo, Martina e Renato</div>
+    </div>
+
+    <script>
+    const scoreElement = document.getElementById('punteggio-esterno');
+
+    // ==========================================================
+    // AUDIO ENGINE (LANCIO, MONETINA, STRUPPEA)
+    // ==========================================================
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    function playSFX(tipo) {
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.connect(gain); gain.connect(audioCtx.destination);
+        const now = audioCtx.currentTime;
+        if (tipo === 'monetina') {
+            osc.type = 'sine'; osc.frequency.setValueAtTime(1050, now);
+            osc.frequency.exponentialRampToValueAtTime(1400, now + 0.1);
+            gain.gain.setValueAtTime(0.1, now); gain.gain.linearRampToValueAtTime(0, now + 0.2);
+            osc.start(); osc.stop(now + 0.2);
+        } else if (tipo === 'lancio') {
+            osc.type = 'triangle'; osc.frequency.setValueAtTime(220, now);
+            osc.frequency.exponentialRampToValueAtTime(900, now + 0.15);
+            gain.gain.setValueAtTime(0.1, now); gain.gain.linearRampToValueAtTime(0, now + 0.25);
+            osc.start(); osc.stop(now + 0.25);
+        } else if (tipo === 'struppea') {
+            osc.type = 'sawtooth'; osc.frequency.setValueAtTime(100, now);
+            osc.frequency.linearRampToValueAtTime(20, now + 0.5);
+            gain.gain.setValueAtTime(0.2, now); gain.gain.linearRampToValueAtTime(0, now + 0.5);
+            osc.start(); osc.stop(now + 0.5);
+        }
+    }
+
+    // ==========================================================
+    // MENU PRINCIPALE
+    // ==========================================================
+    class MainMenu extends Phaser.Scene {
+        constructor() { super('MainMenu'); }
+        preload() {
+            let g = this.make.graphics({x: 0, y: 0, add: false});
+            g.fillStyle(0xffffff, 1); g.fillCircle(4, 4, 4); g.generateTexture('spark', 8, 8); g.clear();
+            g.fillStyle(0xffffff, 1); g.fillRoundedRect(0, 0, 200, 20, 10); g.generateTexture('roundedPlat', 200, 20); g.clear();
+            g.fillStyle(0xffffff, 1); g.fillRoundedRect(0, 0, 40, 40, 12); g.generateTexture('roundedSlime', 40, 40);
+        }
+        create() {
+            scoreElement.style.visibility = 'hidden';
+            const best = localStorage.getItem('neonFlowBest') || 0;
+            this.add.text(400, 70, 'NEON FLOW', { fontSize: '65px', fill: '#ffffff' }).setOrigin(0.5).setShadow(0, 0, '#00ffff', 25, true, true);
+            this.add.text(400, 125, `BEST RECORD: ${best}`, { fontSize: '18px', fill: '#ffff00' }).setOrigin(0.5);
+
+            const levels = [
+                {k:'Level1', c:0x2ecc71, t:'Lvl 1'}, {k:'Level2', c:0x3498db, t:'Lvl 2'},
+                {k:'Level3', c:0x9b59b6, t:'Lvl 3'}, {k:'Level4', c:0xe67e22, t:'Lvl 4'},
+                {k:'Level5', c:0x1abc9c, t:'Lvl 5'}, {k:'Level6', c:0x27ae60, t:'Lvl 6'},
+                {k:'Level7', c:0xecf0f1, t:'Lvl 7'}, {k:'Level8', c:0xffffff, t:'Lvl 8'}
+            ];
+
+            levels.forEach((lvl, i) => {
+                let x = 220 + (i % 4) * 125;
+                let y = 200 + Math.floor(i / 4) * 75;
+                let bg = this.add.rectangle(x, y, 100, 50, 0xffffff, 0.1).setStrokeStyle(3, lvl.c).setInteractive({ useHandCursor: true });
+                this.add.text(x, y, lvl.t, { fontSize: '18px' }).setOrigin(0.5);
+                bg.on('pointerdown', () => this.scene.start(lvl.k));
+                bg.on('pointerover', () => { bg.setScale(1.1); bg.setFillStyle(0xffffff, 0.3); });
+                bg.on('pointerout', () => { bg.setScale(1); bg.setFillStyle(0xffffff, 0.1); });
+            });
+
+            let info = this.add.rectangle(400, 360, 220, 40, 0x00ffff, 0.2).setStrokeStyle(2, 0x00ffff).setInteractive({ useHandCursor: true });
+            this.add.text(400, 360, 'SPIEGAZIONI ❓', { fontSize: '16px', fill: '#00ffff' }).setOrigin(0.5);
+            info.on('pointerdown', () => this.scene.start('Instructions'));
+        }
+    }
+
+    class Instructions extends Phaser.Scene {
+        constructor() { super('Instructions'); }
+        create() {
+            this.add.text(400, 50, 'GUIDA DI NEON FLOW', { fontSize: '32px', fill: '#00ffff' }).setOrigin(0.5);
+            const r = [
+                "COMANDI: Frecce, WASD o SPACE per saltare.",
+                "AUDIO: Lancio (salto), Monetina (bonus), Struppea (danno).",
+                "BIANCO: Muretto normale. | GIALLO: Super Lancio!",
+                "ROSSO: Instabile, cade subito. | LASER: Danni gravi.",
+                "RECORD: I tuoi punti vengono salvati in BEST RECORD."
+            ];
+            r.forEach((txt, i) => this.add.text(400, 130 + (i * 35), txt, { fontSize: '17px' }).setOrigin(0.5));
+            let b = this.add.text(400, 360, 'TORNA AL MENU', { fontSize: '20px', fill: '#ffff00' }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+            b.on('pointerdown', () => this.scene.start('MainMenu'));
+        }
+    }
+
+    class BaseLevel extends Phaser.Scene {
+        constructor(key) { super(key); }
+        init() {
+            this.score = 0; this.nextSpawnX = 500; this.hasCollectedCoin = false;
+            this.isGameOver = false; this.levelCompleted = false;
+        }
+        setupProcedural(target, dmg, color, name, bgColor = '#050510') {
+            this.cameras.main.setBackgroundColor(bgColor);
+            this.physics.world.setBounds(0, -1000, 100000, 1400);
+            scoreElement.style.visibility = 'visible';
+            scoreElement.innerText = `AREA: ${name} | PUNTEGGIO: 0 / ${target} (DANNO: -${dmg})`;
+
+            this.platforms = this.physics.add.group({ allowGravity: false, immovable: true });
+            this.coins = this.physics.add.group({ allowGravity: false });
+
+            this.player = this.physics.add.sprite(150, 250, 'roundedSlime').setTint(color).setOrigin(0.5, 1).setDepth(100);
+            this.player.setCollideWorldBounds(true);
+            
+            // Scia energetica
+            this.add.particles(0, 0, 'spark', {
+                speed: 10, scale: { start: 0.8, end: 0 }, alpha: 0.3, lifespan: 400, blendMode: 'ADD', tint: color
+            }).startFollow(this.player, 0, -20);
+
+            this.eyeL = this.add.rectangle(0, 0, 7, 7, 0x000000).setDepth(101);
+            this.eyeR = this.add.rectangle(0, 0, 7, 7, 0x000000).setDepth(101);
+
+            this.add.text(760, 35, '🏠', { fontSize: '32px' }).setOrigin(0.5).setScrollFactor(0).setInteractive({ useHandCursor: true }).setDepth(500).on('pointerdown', () => this.scene.start('MainMenu'));
+
+            // Laser Energetico pulsante
+            let laser = this.add.rectangle(400, 395, 800, 12, 0xff0000, 1).setScrollFactor(0).setDepth(200);
+            this.tweens.add({ targets: laser, alpha: 0.4, duration: 100, yoyo: true, repeat: -1 });
+
+            this.platforms.add(this.add.image(200, 350, 'roundedPlat').setDisplaySize(500, 20).setTint(color));
+
+            this.extendWorld();
+            this.physics.add.collider(this.player, this.platforms, (p, plat) => {
+                if (p.body.touching.down) {
+                    this.tweens.add({ targets: p, scaleX: 1.3, scaleY: 0.7, duration: 80, yoyo: true });
+                    if (plat.getData('type') === 'elastic') { p.setVelocityY(-1100); playSFX('lancio'); }
+                    if (plat.getData('type') === 'unstable') this.time.delayedCall(500, () => plat.destroy());
+                }
+            }, null, this);
+            
+            this.physics.add.overlap(this.player, this.coins, (p, c) => {
+                c.destroy(); this.score += 10; this.hasCollectedCoin = true; playSFX('monetina');
+                scoreElement.innerText = `AREA: ${name} | PUNTEGGIO: ${this.score} / ${target} (DANNO: -${dmg})`;
+                if (this.score >= target) this.victory();
+            });
+
+            this.cursors = this.input.keyboard.createCursorKeys();
+            this.wasd = this.input.keyboard.addKeys('W,A,S,D');
+            this.spaceKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
+            this.cameras.main.startFollow(this.player, true, 0.1, 0.1);
+        }
+
+        extendWorld() {
+            for (let i = 0; i < 15; i++) {
+                let px = this.nextSpawnX + (i * 220);
+                let py = 310 - (Math.random() * 80);
+                let roll = Math.random();
+                let type = roll > 0.9 ? 'elastic' : (roll > 0.82 ? 'unstable' : 'normal');
+                let col = type === 'elastic' ? 0xffff00 : (type === 'unstable' ? 0xff4444 : 0xffffff);
+                let plat = this.add.image(px, py, 'roundedPlat').setDisplaySize(140, 22).setTint(col);
+                this.platforms.add(plat); plat.setData('type', type);
+                this.coins.add(this.add.circle(px, py - 45, 9, 0xffffff));
+            }
+            this.nextSpawnX += 3300;
+        }
+
+        update() {
+            if (this.isGameOver || this.levelCompleted) return;
+            if (this.player.x > this.nextSpawnX - 2500) this.extendWorld();
+            const spd = 370;
+            if (this.cursors.left.isDown || this.wasd.A.isDown) this.player.setVelocityX(-spd);
+            else if (this.cursors.right.isDown || this.wasd.D.isDown) this.player.setVelocityX(spd);
+            else this.player.setVelocityX(0);
+
+            if ((this.cursors.up.isDown || this.wasd.W.isDown || this.spaceKey.isDown) && this.player.body.touching.down) {
+                this.player.setVelocityY(-710); playSFX('lancio');
+                this.tweens.add({ targets: this.player, scaleX: 0.7, scaleY: 1.4, duration: 120, yoyo: true });
+            }
+            this.eyeL.setPosition(this.player.x - 10, this.player.y - 25);
+            this.eyeR.setPosition(this.player.x + 10, this.player.y - 25);
+            if (this.player.y > 385 && this.hasCollectedCoin) this.handleFloorDamage();
+        }
+
+        handleFloorDamage() {
+            const ui = scoreElement.innerText;
+            const dmg = parseInt(ui.split('-')[1]);
+            this.score -= dmg; playSFX('struppea');
+            scoreElement.innerText = ui.replace(/\d+ \//, `${this.score} /`);
+            if (this.score < 0) {
+                this.isGameOver = true; this.physics.pause();
+                this.add.text(400, 200, 'GAME OVER', { fontSize: '70px', fill: '#ff0000' }).setOrigin(0.5).setScrollFactor(0).setDepth(1001);
+                this.time.delayedCall(2000, () => this.scene.start('MainMenu'));
+            } else { this.player.setVelocityY(-950); this.cameras.main.shake(150, 0.01); }
+        }
+
+        victory() {
+            this.levelCompleted = true; this.physics.pause();
+            const best = localStorage.getItem('neonFlowBest') || 0;
+            if (this.score > best) localStorage.setItem('neonFlowBest', this.score);
+            
+            this.cameras.main.zoomTo(1.2, 1000);
+            this.add.rectangle(400, 200, 800, 400, 0x000000, 0.8).setScrollFactor(0).setDepth(1000);
+            this.add.particles(400, 0, 'spark', { x:{min:0, max:800}, speedY:{min:200, max:400}, lifespan:2000, gravityY:200, tint:[0x00ffff, 0xffff00, 0xff00ff] }).setScrollFactor(0).setDepth(1001);
+            this.add.text(400, 180, 'VITTORIA!', { fontSize: '85px', fill: '#39FF14' }).setOrigin(0.5).setScrollFactor(0).setDepth(1002).setShadow(0,0,'#39FF14',15);
+            this.add.text(400, 270, 'Clicca per il prossimo livello', { fontSize: '20px' }).setOrigin(0.5).setScrollFactor(0).setDepth(1002);
+            this.input.once('pointerdown', () => {
+                let n = parseInt(this.scene.key.replace('Level','')) + 1;
+                this.scene.start(n <= 8 ? 'Level'+n : 'MainMenu');
+            });
+        }
+    }
+
+    class L1 extends BaseLevel { constructor(){super('Level1')} create(){this.setupProcedural(200, 10, 0x2ecc71, 'FOREST', '#031003')} }
+    class L2 extends BaseLevel { constructor(){super('Level2')} create(){this.setupProcedural(300, 15, 0x3498db, 'OCEAN', '#030310')} }
+    class L3 extends BaseLevel { constructor(){super('Level3')} create(){this.setupProcedural(400, 20, 0x9b59b6, 'CYBER', '#080310')} }
+    class L4 extends BaseLevel { constructor(){super('Level4')} create(){this.setupProcedural(500, 25, 0xe67e22, 'MAGMA', '#100303')} }
+    class L5 extends BaseLevel { constructor(){super('Level5')} create(){this.setupProcedural(600, 30, 0x1abc9c, 'SKY', '#031010')} }
+    class L6 extends BaseLevel { constructor(){super('Level6')} create(){this.setupProcedural(700, 35, 0x27ae60, 'TOXIC', '#081003')} }
+    class L7 extends BaseLevel { constructor(){super('Level7')} create(){this.setupProcedural(800, 40, 0xecf0f1, 'ICE', '#0f0f0f')} }
+    class L8 extends BaseLevel { constructor(){super('Level8')} create(){this.setupProcedural(1000, 45, 0xffffff, 'VOID', '#000000')} }
+
+    const config = { type: Phaser.AUTO, parent: 'game-container', width: 800, height: 400, physics: { default: 'arcade', arcade: { gravity: { y: 1600 } } }, scene: [MainMenu, Instructions, L1, L2, L3, L4, L5, L6, L7, L8] };
+    new Phaser.Game(config);
+    </script>
+</body>
+</html>
