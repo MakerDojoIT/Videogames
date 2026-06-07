@@ -1,0 +1,174 @@
+class BaseLevel extends Phaser.Scene {
+    // Il costruttore riceve la "chiave" unica del livello (es. 'Level1')
+    constructor(key) {
+        super(key);
+    }
+
+    // Funzione di inizializzazione per ricevere dati da altri livelli (es. il punteggio ereditato)
+    init(data) {
+        this.punteggio = data.punteggio || 0;
+    }
+
+    // Configurazione iniziale del livello (chiamata automaticamente da Phaser)
+    initLevel(config) {
+        this.larghezzaMappa = config.larghezza;
+        this.altezzaMappa = config.altezza;
+        this.puntiRichiesti = config.puntiRichiesti;
+        this.numeroLivello = config.numeroLivello;
+
+        this.dimensioneBlocco = 20;
+        this.velocitaGioco = 140;
+        this.tempoUltimoMovimento = 0;
+        
+        this.direzione = '';
+        this.giocoAvviato = false;
+        this.livelloSuperato = false;
+        
+        this.snake = [];
+    }
+
+    create() {
+        // 1. Regoliamo la dimensione del Canvas in base alla mappa corrente
+        this.scale.resize(this.larghezzaMappa, this.altezzaMappa);
+
+        // 2. Generazione Terreno
+        for (let x = 0; x < this.larghezzaMappa; x += this.dimensioneBlocco) {
+            for (let y = 0; y < this.altezzaMappa; y += this.dimensioneBlocco) {
+                let n = Math.random();
+                if (n < 0.65) {
+                    this.add.rectangle(x + 10, y + 10, this.dimensioneBlocco, this.dimensioneBlocco, 0x8b5a2b);
+                } else if (n < 0.85) {
+                    this.add.rectangle(x + 10, y + 10, this.dimensioneBlocco, this.dimensioneBlocco, 0x4a2f15);
+                } else {
+                    this.add.rectangle(x + 10, y + 10, this.dimensioneBlocco, this.dimensioneBlocco, 0x8b5a2b);
+                    let dimPietra = Math.floor(Math.random() * 6) + 4;
+                    this.add.rectangle(x + 10, y + 10, dimPietra, dimPietra, 0x7f8c8d);
+                }
+            }
+        }
+
+        // 3. Interfaccia Grafica
+        this.testoPunteggio = this.add.text(20, 20, `PUNTI: ${this.punteggio} | LIVELLO: ${this.numeroLivello}`, {
+            fontSize: '22px',
+            fontStyle: 'bold',
+            fill: '#ffffff',
+            backgroundColor: '#4a2f15',
+            padding: { x: 10, y: 5 }
+        }).setDepth(1);
+
+        // 4. Configurazione Controlli Tastiera
+        this.tastiera = this.input.keyboard.createCursorKeys();
+        this.tastoR = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.R);
+        this.tastoS = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.S);
+
+        // 5. Creazione Serpente al centro
+        let centroX = this.larghezzaMappa / 2;
+        let centroY = this.altezzaMappa / 2;
+        for (let i = 0; i < 3; i++) {
+            let pezzo = this.add.rectangle(centroX, centroY + (i * this.dimensioneBlocco), this.dimensioneBlocco - 2, this.dimensioneBlocco - 2, 0x2ecc71);
+            this.snake.push(pezzo);
+        }
+
+        // 6. Creazione Cibo
+        this.cibo = this.add.rectangle(centroX, centroY - 160, this.dimensioneBlocco - 2, this.dimensioneBlocco - 2, 0xff3333);
+
+        // 7. Testo di Avvio
+        this.testoIniziale = this.add.text(centroX, centroY + 150, 'PREMI UNA FRECCIA PER PARTIRE', {
+            fontSize: '20px',
+            fontStyle: 'bold',
+            fill: '#ffffff',
+            backgroundColor: '#4a2f15',
+            padding: { x: 10, y: 5 }
+        }).setOrigin(0.5);
+    }
+
+    update(tempoAttuale) {
+        // Se il livello è stato superato, gestiamo il codice specifico nelle classi figlie
+        if (this.livelloSuperato) {
+            this.gestisciPassaggioLivello();
+            return;
+        }
+
+        // Lettura input frecce
+        if (this.tastiera.left.isDown && this.direzione !== 'DESTRA') { this.direzione = 'SINISTRA'; this.giocoAvviato = true; }
+        if (this.tastiera.right.isDown && this.direzione !== 'SINISTRA') { this.direzione = 'DESTRA'; this.giocoAvviato = true; }
+        if (this.tastiera.up.isDown && this.direzione !== 'GIU') { this.direzione = 'SU'; this.giocoAvviato = true; }
+        if (this.tastiera.down.isDown && this.direzione !== 'SU') { this.direzione = 'GIU'; this.giocoAvviato = true; }
+
+        if (this.giocoAvviato && this.testoIniziale) {
+            this.testoIniziale.destroy();
+        }
+
+        if (!this.giocoAvviato) return;
+
+        // Regolazione del framerate del movimento dello snake
+        if (tempoAttuale < this.tempoUltimoMovimento + this.velocitaGioco) return;
+        this.tempoUltimoMovimento = tempoAttuale;
+
+        let testaX = this.snake[0].x;
+        let testaY = this.snake[0].y;
+
+        if (this.direzione === 'DESTRA') testaX += this.dimensioneBlocco;
+        if (this.direzione === 'SINISTRA') testaX -= this.dimensioneBlocco;
+        if (this.direzione === 'SU') testaY -= this.dimensioneBlocco;
+        if (this.direzione === 'GIU') testaY += this.dimensioneBlocco;
+
+        // Collisione Muri
+        if (testaX < 0 || testaX >= this.larghezzaMappa || testaY < 0 || testaY >= this.altezzaMappa) {
+            alert(`GAME OVER: Hai urtato il muro! Punti: ${this.punteggio}`);
+            this.riavviaGioco();
+            return;
+        }
+
+        // Collisione Corpo
+        for (let i = 1; i < this.snake.length; i++) {
+            if (testaX === this.snake[i].x && testaY === this.snake[i].y) {
+                alert(`GAME OVER: Ti sei morso la coda! Punti: ${this.punteggio}`);
+                this.riavviaGioco();
+                return;
+            }
+        }
+
+        // Logica quando lo snake mangia il cibo
+        if (testaX === this.cibo.x && testaY === this.cibo.y) {
+            this.punteggio += 10;
+            this.testoPunteggio.setText(`PUNTI: ${this.punteggio} | LIVELLO: ${this.numeroLivello}`);
+
+            let nuovoPezzo = this.add.rectangle(this.cibo.x, this.cibo.y, this.dimensioneBlocco - 2, this.dimensioneBlocco - 2, 0x2ecc71);
+            this.snake.unshift(nuovoPezzo);
+
+            // Controllo superamento livello
+            if (this.punteggio >= this.puntiRichiesti) {
+                this.giocoAvviato = false;
+                this.livelloSuperato = true;
+                this.mostraSchermataVittoria();
+                this.cibo.setPosition(-100, -100);
+                return;
+            }
+
+            this.riposizionaCibo();
+        } else {
+            let coda = this.snake.pop();
+            coda.setPosition(testaX, testaY);
+            this.snake.unshift(coda);
+        }
+    }
+
+    riposizionaCibo() {
+        let limiteMaxX = (this.larghezzaMappa / this.dimensioneBlocco) - 2;
+        let limiteMaxY = (this.altezzaMappa / this.dimensioneBlocco) - 2;
+        let casualeX = Math.floor(Math.random() * limiteMaxX + 1) * this.dimensioneBlocco;
+        let casualeY = Math.floor(Math.random() * limiteMaxY + 1) * this.dimensioneBlocco;
+        this.cibo.setPosition(casualeX, casualeY);
+    }
+
+    riavviaGioco() {
+        this.giocoAvviato = false;
+        // Se si perde, si torna al Livello 1 resettando i punti
+        this.scene.start('Level1', { punteggio: 0 });
+    }
+
+    // Metodi vuoti che verranno riscritti (Override) nei singoli livelli
+    mostraSchermataVittoria() {}
+    gestisciPassaggioLivello() {}
+}
