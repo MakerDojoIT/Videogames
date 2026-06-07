@@ -1,0 +1,1249 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Platform Game 2026 - Penguin OOP Modular Hardcore</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #1a1a2e;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            color: #fff;
+            overflow: hidden;
+        }
+        #ui-container {
+            display: flex;
+            gap: 25px;
+            background: rgba(0, 0, 0, 0.6);
+            padding: 10px 20px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            border: 2px solid #4e54c8;
+            font-size: 16px;
+            font-weight: bold;
+            letter-spacing: 1px;
+        }
+        .ui-item span {
+            color: #00f2fe;
+        }
+        #ui-frecce span {
+            color: #00e676;
+            text-shadow: 0 0 6px #00e676;
+        }
+        .lbl-morti.pericolo {
+            color: #ff4757;
+            text-shadow: 0 0 8px #ff4757;
+            animation: lampeggio 0.5s infinite alternate;
+        }
+        @keyframes lampeggio {
+            from { opacity: 1; }
+            to { opacity: 0.4; }
+        }
+        canvas {
+            border: 4px solid #4e54c8;
+            border-radius: 8px;
+            box-shadow: 0px 10px 30px rgba(0, 0, 0, 0.5);
+            display: block;
+        }
+        .istruzioni {
+            margin-top: 15px;
+            font-size: 14px;
+            color: #8a8f98;
+            text-align: center;
+            line-height: 1.5;
+        }
+    </style>
+    <link rel="icon" href="data:;base64,iVBORw0KGgo=">
+</head>
+<body>
+
+    <div id="ui-container">
+        <div class="ui-item">Livello: <span id="lbl-livello">1</span></div>
+        <div class="ui-item">Punti: <span id="lbl-punti">0</span></div>
+        <div class="ui-item">Tempo: <span id="lbl-tempo">0</span>s</div>
+        <div class="ui-item">Morti: <span id="lbl-morti-p1">0</span>/10</div>
+        <div class="ui-item" id="ui-frecce" style="display: none;">Arma: <span id="lbl-frecce">5</span></div>
+    </div>
+
+    <canvas id="gameCanvas" width="800" height="450"></canvas>
+
+    <div class="istruzioni">
+        <strong>Pinguino:</strong> Tasti A / D per muoverti • W o SPAZIO per il <strong>Doppio Salto</strong> (Suono dei passi attivo! 🔊👣)<br>
+        <strong>Arco Hardcore (Livello 2):</strong> Premi <strong>E</strong> per sparare frecce (Max 5)<br>
+        <strong>Bazooka Suprema (Livello 3):</strong> Scala le piattaforme aeree e raccoglilo sull'ultima! • Premi <strong>Q</strong> per il super razzo!<br>
+        <strong>Switch Armi:</strong> Premi <strong>R</strong> per scambiare manualmente l'Arco e il Bazooka!<br>
+        <strong>Traguardo:</strong> Bandiera nei Livelli 1 e 2. Conquista la Corona Reale al Livello 3!
+    </div>
+
+    <script>
+        // Riferimenti globali agli elementi HTML del DOM
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        const lblLivello = document.getElementById('lbl-livello');
+        const lblPunti = document.getElementById('lbl-punti');
+        const lblTempo = document.getElementById('lbl-tempo');
+        const lblMortiP1 = document.getElementById('lbl-morti-p1');
+        const lblFrecce = document.getElementById('lbl-frecce');
+        const uiFrecce = document.getElementById('ui-frecce');
+
+        // Parametri globali immutabili
+        const WORLD_WIDTH = 6500;
+        const CANVAS_WIDTH = canvas.width;
+        const CANVAS_HEIGHT = canvas.height;
+        const INSULTI_ARCADE = ["GNAM!", "PIZZATO!", "NABBO!", "TRY AGAIN!", "SKILL ISSUE!", "TROPPO LENTO!"];
+
+        // Stati primitivi reattivi condivisi tra le classi
+        let livelloAttuale = 1;
+        let punti = 0;
+        let tempo = 0;
+        let timerInterval;
+        let animationFrameCount = 0;
+        let keys = {};
+
+        // Variabili globali per Nemici, Arco, Proiettili e pericoli temporaleschi
+        let trexes = [];
+        let arrows = [];
+        let hasBow = false;
+        let bowItem = null;
+
+        // Registri Globali Speciali per il Bazooka e l'inventario sbloccato
+        let hasBazooka = false;
+        let bazookaItem = null;
+        let rocketAmmo = 0;
+        let rockets = [];
+        let unlockedBowInventory = false;     
+        let unlockedBazookaInventory = false; 
+       
+        let shootCooldown = 0;
+        const MAX_COOLDOWN = 40;
+        let arrowAmmo = 5;
+
+        let stormClouds = [];
+        let lightnings = [];
+
+        // --- GESTIONE CORE AUDIO POOL LANCI DI FULMINI ---
+        const AUDIO_POOL_SIZE = 6;
+        const fulminiAudioPool = [];
+        let poolNextIndex = 0;
+        let audioSbloccato = false; 
+
+        const SOUND_SOURCE = 'Audio/impactPunch_heavy_000.ogg'; 
+
+        for (let i = 0; i < AUDIO_POOL_SIZE; i++) {
+            const track = new Audio(SOUND_SOURCE);
+            track.preload = 'auto';
+            fulminiAudioPool.push(track);
+        }
+
+        // --- NUOVA GESTIONE AUDIO POOL PASSI ---
+        const PASSI_POOL_SIZE = 4;
+        const passiAudioPool = [];
+        let passiNextIndex = 0;
+
+        const PASSI_SOURCE = 'Audio/impactPlank_medium_000.ogg';
+
+        for (let i = 0; i < PASSI_POOL_SIZE; i++) {
+            const track = new Audio(PASSI_SOURCE);
+            track.preload = 'auto';
+            passiAudioPool.push(track);
+        }
+
+        function sbloccaAudioMascotte() {
+            if (audioSbloccato) return;
+            
+            fulminiAudioPool.forEach(track => {
+                track.play().then(() => { track.pause(); track.currentTime = 0; }).catch(() => {});
+            });
+
+            passiAudioPool.forEach(track => {
+                track.play().then(() => { track.pause(); track.currentTime = 0; }).catch(() => {});
+            });
+
+            audioSbloccato = true;
+            window.removeEventListener('click', sbloccaAudioMascotte);
+            window.removeEventListener('keydown', sbloccaAudioMascotte);
+            console.log("🔊 Sistemi audio pronti!");
+        }
+
+        window.addEventListener('click', sbloccaAudioMascotte);
+        window.addEventListener('keydown', sbloccaAudioMascotte);
+
+        function triggerFulmineSound() {
+            if (!audioSbloccato) return; 
+            const canalSuono = fulminiAudioPool[poolNextIndex];
+            if (canalSuono) {
+                canalSuono.currentTime = 0;
+                canalSuono.volume = 1.0; 
+                canalSuono.play().catch(() => {});
+                poolNextIndex = (poolNextIndex + 1) % AUDIO_POOL_SIZE; 
+            }
+        }
+
+        function triggerPassoSound() {
+            if (!audioSbloccato) return;
+            const canalePasso = passiAudioPool[passiNextIndex];
+            if (canalePasso) {
+                canalePasso.currentTime = 0;
+                canalePasso.volume = 0.5;
+                canalePasso.play().catch(() => {});
+                passiNextIndex = (passiNextIndex + 1) % PASSI_POOL_SIZE;
+            }
+        }
+
+        let globalGameOverTimer = 0;
+        let globalVictoryTimer = 0;
+        let riepilogoVittoria = { punti: 0, tempo: 0, morti: 0 };
+
+        let lvl2CloudsX = [50, 320, 600, 900];
+
+        // --- LISTENER INPUT UNIFICATI ---
+        window.addEventListener("keydown", (e) => {
+            keys[e.key] = true;
+            keys[e.code] = true;
+
+            if ((e.key === 'r' || e.key === 'R' || e.code === 'KeyR') && unlockedBowInventory && unlockedBazookaInventory) {
+                if (hasBow && rocketAmmo > 0) {
+                    hasBow = false;
+                    hasBazooka = true;
+                    if (lblFrecce) lblFrecce.innerText = `${rocketAmmo} 🚀`;
+                } else if (hasBazooka) {
+                    hasBazooka = false;
+                    hasBow = true;
+                    if (lblFrecce) lblFrecce.innerText = arrowAmmo;
+                }
+            }
+        });
+        window.addEventListener("keyup", (e) => {
+            keys[e.key] = false;
+            keys[e.code] = false;
+        });
+        window.addEventListener("blur", () => { keys = {}; });
+
+        // --- ARCHITETTURA DATI STATICI DEI LIVELLI ---
+        const livelliDatiStatici = {
+            1: {
+                platforms: [
+                    { x: 0, y: 350, w: 600, h: 100 },
+                    { x: 690, y: 350, w: 560, h: 100 },  
+                    { x: 1340, y: 320, w: 560, h: 130 },
+                    { x: 1990, y: 350, w: 1010, h: 100 }
+                ],
+                obstacles: [
+                    { x: 300, y: 310, w: 40, h: 40 },
+                    { x: 1000, y: 310, w: 40, h: 40 },
+                    { x: 2300, y: 310, w: 40, h: 40 }
+                ],
+                coins: [
+                    { x: 200, y: 280, w: 16, h: 16 },
+                    { x: 400, y: 250, w: 16, h: 16 },
+                    { x: 900, y: 280, w: 16, h: 16 },
+                    { x: 1600, y: 220, w: 16, h: 16 },
+                    { x: 2500, y: 280, w: 16, h: 16 }
+                ],
+                pitfalls: [
+                    { type: 'lava', x: 600, w: 90, floorY: 415 },  
+                    { type: 'lava', x: 1250, w: 90, floorY: 415 },
+                    { type: 'lava', x: 1900, w: 90, floorY: 415 }  
+                ],
+                enemies: [],
+                goal: { x: 2900, y: 300, w: 30, h: 50 }
+            },
+            2: {
+                platforms: [
+                    { x: 0, y: 380, w: 450, h: 70 },
+                    { x: 160, y: 240, w: 120, h: 30 },
+                    { x: 540, y: 320, w: 500, h: 130 },
+                    { x: 1130, y: 260, w: 600, h: 190 },
+                    { x: 1820, y: 340, w: 500, h: 110 },
+                    { x: 2420, y: 350, w: 580, h: 100 }
+                ],
+                obstacles: [
+                    { x: 250, y: 340, w: 40, h: 40 },
+                    { x: 580, y: 280, w: 40, h: 40 },
+                    { x: 960, y: 280, w: 40, h: 40 },
+                    { x: 1250, y: 220, w: 40, h: 40 },
+                    { x: 1620, y: 220, w: 40, h: 40 },
+                    { x: 2200, y: 300, w: 40, h: 40 }
+                ],
+                coins: [
+                    { x: 400, y: 300, w: 16, h: 16 },
+                    { x: 850, y: 250, w: 16, h: 16 },
+                    { x: 1500, y: 180, w: 16, h: 16 }
+                ],
+                pitfalls: [
+                    { type: 'lava', x: 450, w: 90, floorY: 415 },
+                    { type: 'lava', x: 1040, w: 90, floorY: 415 },
+                    { type: 'lava', x: 1730, w: 90, floorY: 415 },
+                    { type: 'lava', x: 2320, w: 100, floorY: 415 }
+                ],
+                enemies: [
+                    { type: 'red', x: 680, floorY: 320, minX: 640, maxX: 1000 },
+                    { type: 'white', x: 1200, floorY: 260, minX: 1140, maxX: 1450 },
+                    { type: 'red', x: 1500, floorY: 260, minX: 1460, maxX: 1700 },
+                    { type: 'white', x: 1900, floorY: 340, minX: 1830, maxX: 2300 },
+                    { type: 'red', x: 2500, floorY: 350, minX: 2430, maxX: 2850 }
+                ],
+                goal: { x: 2900, y: 290, w: 30, h: 50 }
+            },
+            3: {
+                platforms: [
+                    { x: 0, y: 350, w: 450, h: 100 },    
+                    { x: 540, y: 350, w: 600, h: 100 },  
+                    { x: 700, y: 260, w: 120, h: 30 },   
+                    { x: 880, y: 200, w: 120, h: 30 },   
+                    { x: 1060, y: 150, w: 120, h: 30 },  
+                    { x: 1250, y: 110, w: 160, h: 340 }, 
+                    { x: 1520, y: 320, w: 500, h: 130 }, 
+                    { x: 2160, y: 350, w: 4340, h: 100 } 
+                ],
+                obstacles: [
+                    { x: 250, y: 310, w: 40, h: 40 },
+                    { x: 620, y: 310, w: 40, h: 40 },
+                    { x: 1650, y: 280, w: 40, h: 40 },
+                    { x: 1850, y: 280, w: 40, h: 40 },
+                    { x: 2300, y: 310, w: 40, h: 40 },
+                    { x: 2500, y: 310, w: 40, h: 40 }
+                ],
+                coins: [
+                    { x: 300, y: 280, w: 16, h: 16 },
+                    { x: 750, y: 210, w: 16, h: 16 },
+                    { x: 930, y: 150, w: 16, h: 16 },
+                    { x: 1700, y: 250, w: 16, h: 16 }
+                ],
+                pitfalls: [
+                    { type: 'lava', x: 450, w: 90, floorY: 415 },   
+                    { type: 'lava', x: 1140, w: 110, floorY: 415 },  
+                    { type: 'lava', x: 1410, w: 110, floorY: 415 },  
+                    { type: 'lava', x: 2020, w: 140, floorY: 415 }   
+                ],
+                enemies: [
+                    { type: 'white', x: 150, floorY: 350, minX: 50, maxX: 400 }, 
+                    { type: 'white', x: 1680, floorY: 320, minX: 1550, maxX: 1980 },
+                    { type: 'red', x: 2300, floorY: 350, minX: 2200, maxX: 2450 },
+                    { type: 'boss', x: 2700, floorY: 350, minX: 2180, maxX: 6300 } 
+                ],
+                goal: { x: 6400, y: 310, w: 40, h: 40 } 
+            }
+        };
+    </script>
+
+    <script src="entities.js"></script>
+    <script src="levelBase.js"></script>
+    <script src="levelGenerator.js"></script>
+
+    <script>
+        // --- CLASSE: FULMINE CADENTE (LIVELLO 3) ---
+        class LightningBolt {
+            constructor(x, y) {
+                this.x = x; this.y = y; this.w = 12; this.h = 32;
+                this.speedY = 5.5; this.toRemove = false;
+            }
+            update() { this.y += this.speedY; }
+            checkCollision(player) {
+                return player.x < this.x + this.w && player.x + player.width > this.x &&
+                       player.y < this.y + this.h && player.y + player.height > this.y;
+            }
+            draw(ctx) {
+                ctx.fillStyle = (animationFrameCount % 4 < 2) ? '#fff2fe' : '#f1c40f';
+                ctx.fillRect(this.x, this.y, this.w, this.h / 2);
+                ctx.fillRect(this.x - 4, this.y + this.h / 2, this.w, this.h / 2);
+                ctx.strokeStyle = 'rgba(241, 196, 15, 0.4)'; ctx.lineWidth = 4;
+                ctx.strokeRect(this.x - 4, this.y, this.w + 4, this.h);
+            }
+        }
+
+        // --- CLASSE: NUVOLA DI TEMPESTA INFERNALE MODIFICATA (GRAFICA MIGLIORATA) ---
+        class StormCloud {
+            constructor(x, y, minX, maxX) {
+                this.x = x; this.y = y; this.w = 160; this.h = 35;
+                this.minX = minX; this.maxX = maxX;
+                this.speedX = 1.2; this.dir = 1;
+                this.strikeTimer = Math.random() * 60;
+                this.strikeInterval = 130;
+            }
+            update() {
+                this.x += this.speedX * this.dir;
+                if (this.x < this.minX) { this.x = this.minX; this.dir = 1; }
+                if (this.x > this.maxX - this.w) { this.x = this.maxX - this.w; this.dir = -1; }
+
+                this.strikeTimer++;
+                if (this.strikeTimer >= this.strikeInterval) {
+                    this.strikeTimer = 0;
+                    lightnings.push(new LightningBolt(this.x + (this.w / 2) - 6, this.y + this.h));
+                    triggerFulmineSound();
+                }
+            }
+            draw(ctx) {
+                // Corpo della nuvola stratificato a cumulo pixel-art
+                if (this.strikeTimer > this.strikeInterval - 25 && animationFrameCount % 4 < 2) {
+                    ctx.fillStyle = '#ff4757'; // Lampeggio rosso pre-fulmine
+                } else {
+                    ctx.fillStyle = '#3d1d3d'; // Viola scuro/infernale ombrato
+                }
+                
+                // Disegno a blocchi stondati/puffy
+                ctx.fillRect(this.x, this.y + 10, this.w, this.h - 10);
+                ctx.fillRect(this.x + 16, this.y + 4, this.w - 32, 12);
+                ctx.fillRect(this.x + 36, this.y, this.w - 72, 10);
+               
+                // Ombra inferiore della nuvola
+                ctx.fillStyle = '#1e001e';
+                ctx.fillRect(this.x + 12, this.y + this.h - 4, this.w - 24, 4);
+
+                // Luci elettriche superiori prototipo
+                if (this.strikeTimer > this.strikeInterval - 25) {
+                    ctx.fillStyle = '#ffffff';
+                    ctx.fillRect(this.x + 40, this.y + 2, this.w - 80, 2);
+                }
+            }
+        }
+
+        // --- CLASSE: ITEM BAZOOKA RACCOGLIBILE ---
+        class BazookaItem {
+            constructor(x, y) {
+                this.x = x; this.y = y; this.w = 26; this.h = 16;
+                this.collected = false;
+            }
+            checkPickup(player) {
+                if (this.collected) return;
+                if (player.x < this.x + this.w && player.x + player.width > this.x &&
+                    player.y < this.y + this.h && player.y + player.height > this.y) {
+                    this.collected = true;
+                    hasBazooka = true;
+                    hasBow = false; 
+                    unlockedBazookaInventory = true;
+                    rocketAmmo = 1; 
+                    if (lblFrecce) lblFrecce.innerText = "1 🚀";
+                    if (uiFrecce) uiFrecce.style.display = 'block';
+                }
+            }
+            draw(ctx) {
+                if (this.collected) return;
+                let bobbing = Math.sin(animationFrameCount / 8) * 3;
+                let drawY = this.y + bobbing;
+                ctx.fillStyle = '#4b6584';
+                ctx.fillRect(this.x, drawY + 4, 26, 8);
+                ctx.fillStyle = '#2d3436';
+                ctx.fillRect(this.x + 6, drawY + 12, 4, 5); 
+                ctx.fillStyle = '#fed330'; 
+                ctx.fillRect(this.x + 16, drawY, 3, 4);
+            }
+        }
+
+        // --- CLASSE: PROIETTILE SUPER RAZZO ---
+        class RocketProjectile {
+            constructor(x, y, dir) {
+                this.x = x; this.y = y; this.w = 24; this.h = 8;
+                this.dir = dir; this.speed = 6.5; this.toRemove = false;
+            }
+            update() { this.x += this.speed * this.dir; }
+            draw(ctx) {
+                ctx.fillStyle = '#a5b1c2';
+                ctx.fillRect(this.x, this.y, this.w, this.h);
+                ctx.fillStyle = '#eb3b5a';
+                if (this.dir === 1) {
+                    ctx.fillRect(this.x + this.w, this.y, 4, this.h);
+                } else {
+                    ctx.fillRect(this.x - 4, this.y, 4, this.h);
+                }
+                if (animationFrameCount % 2 === 0) {
+                    ctx.fillStyle = '#f7b731';
+                    let tailX = this.dir === 1 ? this.x - 6 : this.x + this.w;
+                    ctx.fillRect(tailX, this.y + 1, 6, this.h - 2);
+                }
+            }
+        }
+
+        // --- OVERRIDE FISICA ASSI SEPARATI E DESIGN DEL GIOCATORE ---
+        if (typeof Penguin !== 'undefined') {
+            Penguin.prototype.update = function(platforms) {
+                if (globalGameOverTimer > 0 || globalVictoryTimer > 0) {
+                    this.timerTestoMorte = 0;
+                    this.testoMorte = "";
+                    return;
+                }
+
+                if (this.timerTestoMorte > 0) {
+                    this.timerTestoMorte--;
+                    if (this.timerTestoMorte === 0) {
+                        this.testoMorte = "";
+                        this.resetLogicState(); 
+                    }
+                    return; 
+                }
+
+                this.isWalking = false;
+
+                if (keys['a'] || keys['A']) {
+                    if (this.vx > -this.maxSpeed) this.vx -= this.speed;
+                    this.direzione = 'sinistra';
+                    this.isWalking = true;
+                }
+                if (keys['d'] || keys['D']) {
+                    if (this.vx < this.maxSpeed) this.vx += this.speed;
+                    this.direzione = 'destra';
+                    this.isWalking = true;
+                }
+
+                this.vx *= this.friction;
+                this.vy += this.gravity;
+
+                this.x += this.vx;
+                if (this.x < 0) this.x = 0;
+                if (this.x > WORLD_WIDTH - this.width) this.x = WORLD_WIDTH - this.width;
+
+                for (let plat of platforms) {
+                    if (this.x < plat.x + plat.w && this.x + this.width > plat.x &&
+                        this.y < plat.y + plat.h && this.y + this.height > plat.y) {
+                        if (this.vy >= 0 && (this.y + this.height - this.vy) <= plat.y + 12) {
+                            continue;
+                        }
+                        if (this.vx > 0) this.x = plat.x - this.width;
+                        else if (this.vx < 0) this.x = plat.x + plat.w;
+                        this.vx = 0;
+                    }
+                }
+
+                this.y += this.vy;
+                this.grounded = false;
+
+                for (let plat of platforms) {
+                    if (this.x < plat.x + plat.w && this.x + this.width > plat.x &&
+                        this.y < plat.y + plat.h && this.y + this.height > plat.y) {
+                        if (this.vy > 0) {
+                            this.y = plat.y - this.height;
+                            this.vy = 0;
+                            this.grounded = true;
+                        } else if (this.vy < 0) {
+                            this.y = plat.y + plat.h;
+                            this.vy = 0;
+                        }
+                    }
+                }
+
+                // --- INTEGRAZIONE LOGICA DOPPIO SALTO HARDCORE ---
+                if (this.extraJumps === undefined) this.extraJumps = 0;
+                if (this.jumpPressedLastFrame === undefined) this.jumpPressedLastFrame = false;
+
+                let jumpKeyPressed = keys['Space'] || keys['w'] || keys['W'];
+
+                if (this.grounded) {
+                    this.extraJumps = 1; 
+                }
+
+                if (jumpKeyPressed && !this.jumpPressedLastFrame) {
+                    if (this.grounded) {
+                        this.vy = -this.jumpForce;
+                        this.grounded = false;
+                    } else if (this.extraJumps > 0) {
+                        this.vy = -this.jumpForce * 0.95; 
+                        this.extraJumps--;
+                        this.isWalking = true; 
+                    }
+                }
+                this.jumpPressedLastFrame = jumpKeyPressed;
+
+                if (this.isWalking && this.grounded && animationFrameCount % 22 === 0) {
+                    triggerPassoSound();
+                }
+            };
+
+            Penguin.prototype.draw = function(ctx) {
+                let bobbingY = 0;
+                let legOffset = 0;
+
+                if (this.isWalking && this.grounded) {
+                    bobbingY = Math.abs(Math.sin(animationFrameCount * 0.25)) * 4; 
+                    legOffset = Math.sin(animationFrameCount * 0.3) * 3;          
+                }
+
+                let drawX = this.x;
+                let drawY = this.y + bobbingY;
+
+                ctx.fillStyle = '#2ecc71'; 
+                ctx.beginPath();
+                ctx.moveTo(drawX + 6, drawY + 2);              
+                ctx.lineTo(drawX + this.width - 6, drawY + 2); 
+                
+                if (this.direzione === 'destra') {
+                    ctx.bezierCurveTo(drawX + this.width + 4, drawY - 4, drawX + 4, drawY - 10, drawX + 2, drawY - 12);
+                    ctx.bezierCurveTo(drawX + 8, drawY - 6, drawX + 4, drawY - 2, drawX + 6, drawY + 2);
+                } else {
+                    ctx.bezierCurveTo(drawX - 4, drawY - 4, drawX + this.width - 4, drawY - 10, drawX + this.width - 2, drawY - 12);
+                    ctx.bezierCurveTo(drawX + this.width - 8, drawY - 6, drawX + this.width - 4, drawY - 2, drawX + this.width - 6, drawY + 2);
+                }
+                ctx.closePath();
+                ctx.fill();
+
+                ctx.fillStyle = '#ffffff';
+                let pomponX = (this.direzione === 'destra') ? drawX + 1 : drawX + this.width - 4;
+                ctx.fillRect(pomponX, drawY - 15, 4, 4);
+
+                ctx.fillStyle = this.colorBody; 
+                ctx.fillRect(drawX + 2, drawY + 4, this.width - 4, this.height - 8);
+                ctx.fillRect(drawX + 4, drawY + 2, this.width - 8, this.height - 4);
+
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(drawX + 8, drawY + 14, this.width - 16, this.height - 18);
+                ctx.fillRect(drawX + 6, drawY + 18, this.width - 12, this.height - 24);
+
+                ctx.fillStyle = '#000000';
+                if (this.direzione === 'destra') {
+                    ctx.fillRect(drawX + 20, drawY + 8, 3, 4); 
+                    ctx.fillRect(drawX + 12, drawY + 8, 3, 4); 
+                } else {
+                    ctx.fillRect(drawX + 10, drawY + 8, 3, 4);
+                    ctx.fillRect(drawX + 18, drawY + 8, 3, 4);
+                }
+
+                ctx.fillStyle = '#ffa502';
+                if (this.direzione === 'destra') {
+                    ctx.fillRect(drawX + 22, drawY + 12, 6, 4); 
+                } else {
+                    ctx.fillRect(drawX - 2, drawY + 12, 6, 4);
+                }
+
+                ctx.fillStyle = this.colorFeet;
+                ctx.fillRect(drawX + 4, this.y + this.height - 4 + (legOffset), 6, 4);  
+                ctx.fillRect(drawX + this.width - 10, this.y + this.height - 4 - (legOffset), 6, 4); 
+
+                ctx.fillStyle = this.colorBody;
+                if (this.direzione === 'destra') {
+                    ctx.fillRect(drawX - 1, drawY + 14, 3, 10); 
+                } else {
+                    ctx.fillRect(drawX + this.width - 2, drawY + 14, 3, 10); 
+                }
+
+                ctx.fillStyle = '#7f8c8d'; 
+                let shieldX = (this.direzione === 'destra') ? drawX + this.width - 5 : drawX - 3;
+                ctx.fillRect(shieldX, drawY + 16, 8, 12);
+                ctx.fillStyle = '#2980b9'; 
+                ctx.fillRect(shieldX + 2, drawY + 18, 4, 8);
+            };
+        }
+
+        // --- RENDERING DELLE PIATTAFORME VOLANTI ---
+        if (typeof Platform !== 'undefined') {
+            Platform.prototype.draw = function(ctx) {
+                ctx.fillStyle = '#6d4c41';
+                ctx.fillRect(this.x, this.y + 8, this.w, this.h - 8);
+               
+                ctx.fillStyle = '#4e342e';
+                for (let px = this.x + 12; px < this.x + this.w; px += 32) {
+                    if (this.h > 16) ctx.fillRect(px, this.y + 16, 8, 6);
+                    if (this.h > 28) ctx.fillRect(px - 16, this.y + 28, 6, 4);
+                }
+
+                ctx.fillStyle = '#2e7d32';
+                ctx.fillRect(this.x, this.y, this.w, 8);
+
+                ctx.fillStyle = '#4caf50';
+                let blockSize = 4;
+                for (let gx = 0; gx < this.w; gx += blockSize * 2) {
+                    ctx.fillRect(this.x + gx, this.y, blockSize, blockSize);
+                    ctx.fillRect(this.x + gx + blockSize, this.y + 3, blockSize, blockSize * 2);
+                }
+            };
+        }
+
+        // --- CLASSE: ARCO DA RACCOGLIERE ---
+        class BowItem {
+            constructor(x, y) {
+                this.x = x; this.y = y; this.w = 20; this.h = 25;
+                this.collected = false;
+            }
+            checkPickup(player) {
+                if (this.collected) return;
+                if (player.x < this.x + this.w && player.x + player.width > this.x &&
+                    player.y < this.y + this.h && player.y + player.height > this.y) {
+                    this.collected = true;
+                    hasBow = true;
+                    hasBazooka = false;
+                    unlockedBowInventory = true;
+                    arrowAmmo = 5; 
+                    if (lblFrecce) lblFrecce.innerText = arrowAmmo;
+                    if (uiFrecce) uiFrecce.style.display = 'block';
+                }
+            }
+            draw(ctx) {
+                if (this.collected) return;
+                let bobbing = Math.sin(animationFrameCount / 8) * 3;
+                let drawY = this.y + bobbing;
+                ctx.strokeStyle = '#d35400'; ctx.lineWidth = 3; ctx.beginPath();
+                ctx.arc(this.x + 5, drawY + 12, 12, -Math.PI/2, Math.PI/2); ctx.stroke();
+                ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1; ctx.beginPath();
+                ctx.moveTo(this.x + 5, drawY); ctx.lineTo(this.x + 5, drawY + 24); ctx.stroke();
+            }
+        }
+
+        // --- CLASSE: PROIETTILE FRECCIA ---
+        class ArrowProjectile {
+            constructor(x, y, dir, type = 'normal') {
+                this.x = x; this.y = y; this.w = 18; this.h = 4;
+                this.dir = dir; this.speed = 8; this.toRemove = false;
+                this.type = type;
+            }
+            update() { this.x += this.speed * this.dir; }
+            draw(ctx) {
+                if (this.type === 'fire') {
+                    ctx.fillStyle = '#ff6600'; ctx.fillRect(this.x, this.y - 2, this.w, this.h + 4);
+                    ctx.fillStyle = '#f1c40f';
+                    if (this.dir === 1) {
+                        ctx.fillRect(this.x + this.w - 4, this.y - 3, 4, 10);
+                        if (animationFrameCount % 2 === 0) { ctx.fillStyle = '#ff4757'; ctx.fillRect(this.x - 4, this.y, 4, 4); }
+                    } else {
+                        ctx.fillRect(this.x, this.y - 3, 4, 10);
+                        if (animationFrameCount % 2 === 0) { ctx.fillStyle = '#ff4757'; ctx.fillRect(this.x + this.w, this.y, 4, 4); }
+                    }
+                } else {
+                    ctx.fillStyle = '#616161'; ctx.fillRect(this.x, this.y, this.w, this.h);
+                    ctx.fillStyle = '#ffffff';
+                    if (this.dir === 1) {
+                        ctx.fillRect(this.x, this.y - 2, 4, 2); ctx.fillRect(this.x, this.y + 4, 4, 2);
+                        ctx.fillStyle = '#00e676'; ctx.fillRect(this.x + this.w - 4, this.y - 1, 4, 6);
+                    } else {
+                        ctx.fillRect(this.x + this.w - 4, this.y - 2, 4, 2); ctx.fillRect(this.x + this.w - 4, this.y + 4, 4, 2);
+                        ctx.fillStyle = '#00e676'; ctx.fillRect(this.x, this.y - 1, 4, 6);
+                    }
+                }
+            }
+        }
+
+        // --- CLASSE: IL T-REX COMBATTENTE / GODZILLA BOSS ---
+        class TRexEnemy {
+            constructor(type, x, floorY, minX, maxX) {
+                this.type = type; this.isBoss = type === 'boss';
+                this.w = this.isBoss ? 160 : 40; this.h = this.isBoss ? 140 : 35;
+                this.x = x; this.floorY = floorY; this.y = floorY - this.h;
+                this.minX = minX; this.maxX = maxX;
+                this.speed = type === 'white' ? 0.8 : 1.5; this.dir = -1;
+                this.isDead = false; 
+                this.hp = this.isBoss ? 50 : 1; 
+                this.hurtTimer = 0; this.fireTimer = 0; this.isSpittingFire = false;
+            }
+
+            update(playerX) {
+                if (this.isDead || globalGameOverTimer > 0 || globalVictoryTimer > 0) return;
+                if (this.hurtTimer > 0) this.hurtTimer--;
+
+                let currentSpeed = this.speed;
+                if ((this.type === 'red' || this.isBoss) && playerX > this.minX && playerX < this.maxX) {
+                    currentSpeed = this.isBoss ? 2.5 : 3.5; this.dir = (playerX > this.x) ? 1 : -1;
+                }
+
+                if (this.type === 'white' || this.isBoss) {
+                    this.fireTimer++;
+                    let triggerTime = this.isBoss ? 90 : 120;
+                    if (this.fireTimer > triggerTime) {
+                        this.isSpittingFire = true;
+                        if (this.fireTimer > triggerTime + 50) { this.fireTimer = 0; this.isSpittingFire = false; }
+                    }
+                }
+
+                if (!this.isSpittingFire) {
+                    this.x += currentSpeed * this.dir;
+                    if (this.x < this.minX) { this.x = this.minX; this.dir = 1; }
+                    if (this.x > this.maxX - this.w) { this.x = this.maxX - this.w; this.dir = -1; }
+                }
+            }
+
+            checkCollision(player) {
+                if (this.isDead || player.timerTestoMorte > 0 || globalGameOverTimer > 0 || globalVictoryTimer > 0) return false;
+                
+                let dinoX = this.x + (this.isBoss ? 32 : 4); 
+                let dinoY = this.y;
+                let dinoW = this.w - (this.isBoss ? 64 : 8); 
+                let dinoH = this.h;
+
+                let colCorpo = player.x < dinoX + dinoW && player.x + player.width > dinoX &&
+                               player.y < dinoY + dinoH && player.y + player.height > dinoY;
+
+                if (colCorpo) {
+                    if (player.vy > 0 && player.y + player.height - player.vy <= dinoY + 25) {
+                        player.vy = -12; this.hp--; this.hurtTimer = 15;
+                        if (this.hp <= 0) {
+                            this.isDead = true;
+                            punti += this.isBoss ? 500 : (this.type === 'red' ? 50 : 100);
+                            lblPunti.innerText = punti;
+                        }
+                        return false;
+                    }
+                    return true; 
+                }
+
+                if (this.isSpittingFire) {
+                    let fHeight = this.isBoss ? 400 : 60;
+                    let flameX = (this.dir === 1) ? (this.x + this.w) : (this.x - fHeight);
+                    let flameW = fHeight;
+                    let flameY = this.y + (this.h / (this.isBoss ? 4.5 : 3.2)) - (this.isBoss ? 16 : 5);
+                    let flameH = this.isBoss ? 40 : 12;
+
+                    let colFiamma = player.x < flameX + flameW && player.x + player.width > flameX &&
+                                    player.y < flameY + flameH && player.y + player.height > flameY;
+                    
+                    if (colFiamma) return true; 
+                }
+                
+                return false;
+            }
+
+            draw(ctx) {
+                if (this.isDead) return;
+                let baseDx = this.x; let baseDy = this.y;
+                let cOutline = '#000000'; 
+                let cBody, cShadow, cBelly, cSpikes, cEye;
+
+                if (this.isBoss) {
+                    cBody = '#1e2d2f'; cShadow = '#111b1c'; cBelly = '#3a4f52'; cSpikes = '#00f2fe'; cEye = '#ff3333';    
+                } else if (this.type === 'red') {
+                    cBody = '#ff4757'; cShadow = '#c0392b'; cBelly = '#ff7f50'; cSpikes = '#ffa502'; cEye = '#ffffff';    
+                } else {
+                    cBody = '#dcdde1'; cShadow = '#718093'; cBelly = '#f5f6fa'; cSpikes = '#e1b12c'; cEye = '#2f3640';    
+                }
+
+                if (this.hurtTimer > 0 && Math.floor(animationFrameCount / 2) % 2 === 0) { 
+                    cBody = '#ffffff'; cShadow = '#ffffff'; cBelly = '#ffffff'; cSpikes = '#ffffff';
+                }
+
+                if (this.isBoss) {
+                    let barW = 120, barH = 8, barX = this.x + (this.w / 2) - (barW / 2), barY = this.y - 25;
+                    ctx.fillStyle = '#1e272e'; ctx.fillRect(barX, barY, barW, barH);
+                    let healthW = Math.max(0, (this.hp / 50) * barW); 
+                    ctx.fillStyle = this.hp <= 15 ? '#ff4757' : '#2ecc71'; ctx.fillRect(barX, barY, healthW, barH);
+                    ctx.fillStyle = '#00f2fe'; ctx.font = 'bold 14px "Segoe UI"'; ctx.textAlign = 'center';
+                    ctx.fillText("GODZILLA BOSS 👑", this.x + this.w / 2, this.y - 35);
+                }
+
+                let scale = this.isBoss ? 4.0 : 1; 
+                let p = 1.35 * (scale / (this.isBoss ? 2.2 : 1)) * (this.isBoss ? 2.0 : 1); 
+
+                ctx.save();
+                if (this.dir === 1) { ctx.translate(baseDx + this.w, baseDy); ctx.scale(-1, 1); } 
+                else { ctx.translate(baseDx, baseDy); }
+
+                ctx.fillStyle = this.isBoss ? ((this.isSpittingFire || animationFrameCount % 16 < 8) ? '#00f2fe' : '#adffff') : cSpikes;
+                ctx.fillRect(23*p, 14*p, 2*p, 2*p); ctx.fillRect(23*p, 18*p, 2*p, 2*p); ctx.fillRect(23*p, 22*p, 2*p, 2*p);
+                if (this.isBoss) { ctx.fillRect(25*p, 16*p, 2*p, 2*p); ctx.fillRect(25*p, 20*p, 2*p, 2*p); }
+
+                ctx.fillStyle = cOutline; ctx.fillRect(23*p, 23*p, 5*p, 5*p); ctx.fillRect(26*p, 21*p, 4*p, 3*p);
+                ctx.fillStyle = cBody; ctx.fillRect(23*p, 24*p, 6*p, 3*p); ctx.fillRect(25*p, 22*p, 4*p, 2*p);
+                ctx.fillStyle = cShadow; ctx.fillRect(10*p, 24*p, 4*p, 5*p); ctx.fillRect(9*p, 28*p, 4*p, 2*p);
+                ctx.fillStyle = cOutline; ctx.fillRect(8*p, 30*p, 5*p, 1*p);
+
+                ctx.fillStyle = cBody; ctx.fillRect(9*p, 15*p, 14*p, 12*p); ctx.fillRect(5*p, 2*p, 17*p, 14*p);  
+                ctx.fillStyle = cShadow; ctx.fillRect(5*p, 2*p, 2*p, 14*p); ctx.fillRect(7*p, 2*p, 10*p, 2*p); ctx.fillRect(21*p, 13*p, 2*p, 11*p);
+                ctx.fillStyle = cBelly; ctx.fillRect(12*p, 16*p, 4*p, 9*p); ctx.fillRect(5*p, 13*p, 8*p, 3*p);  
+
+                ctx.fillStyle = cOutline; ctx.fillRect(5*p, 9*p, 8*p, 4*p);   
+                ctx.fillStyle = '#ffffff'; ctx.fillRect(7*p, 9*p, 1*p, 1*p); ctx.fillRect(10*p, 9*p, 1*p, 1*p); ctx.fillRect(6*p, 12*p, 1*p, 1*p); ctx.fillRect(9*p, 12*p, 1*p, 1*p);  
+
+                ctx.fillStyle = cEye; ctx.fillRect(14*p, 7*p, 3*p, 2*p);
+                ctx.fillStyle = cOutline; ctx.fillRect(15*p, 7*p, 1*p, 2*p);
+                ctx.fillRect(7*p, 18*p, 4*p, 3*p); ctx.fillStyle = cShadow; ctx.fillRect(8*p, 19*p, 3*p, 2*p);
+
+                ctx.fillStyle = cBody; ctx.fillRect(13*p, 24*p, 5*p, 5*p); ctx.fillRect(14*p, 28*p, 3*p, 4*p);
+                ctx.fillStyle = cOutline; ctx.fillRect(13*p, 31*p, 5*p, 1*p);
+                ctx.restore();
+
+                if (this.isSpittingFire) {
+                    let size = this.isBoss ? 16 : 5, fHeight = this.isBoss ? 400 : 60;
+                    for (let fy = 0; fy < fHeight; fy += size) {
+                        let ratio = fy / fHeight;
+                        ctx.fillStyle = this.isBoss ? (ratio < 0.25 ? '#ffffff' : (ratio < 0.65 ? '#adffff' : '#00f2fe')) : (ratio < 0.3 ? '#ffffff' : (ratio < 0.7 ? '#ffa502' : '#ff4757'));
+                        let drift = Math.sin(animationFrameCount + fy) * (this.isBoss ? 12 : 6); 
+                        let flameX = (this.dir === 1) ? (this.x + this.w + fy/2 - size) : (this.x - fy/2);
+                        ctx.fillRect(flameX + drift, this.y + (this.h / (this.isBoss ? 4.5 : 3.2)) - size, size, size);
+                    }
+                }
+            }
+        }
+
+        // --- OVERRIDE ENGINE DI BASE (LEVELBASE) ---
+        if (typeof LevelBase !== 'undefined') {
+            LevelBase.prototype.initTimer = function() {
+                clearInterval(timerInterval);
+                timerInterval = setInterval(() => {
+                    if (globalGameOverTimer === 0 && globalVictoryTimer === 0 && this.player.timerTestoMorte === 0) {
+                        tempo++;
+                        if (lblTempo) lblTempo.innerText = tempo;
+                    }
+                }, 1000);
+            };
+
+            LevelBase.prototype.processDeath = function() {
+                if (this.player.timerTestoMorte > 0 || globalGameOverTimer > 0 || globalVictoryTimer > 0) return; 
+
+                this.player.morti++;
+                lblMortiP1.innerText = this.player.morti;
+
+                if (this.player.morti >= 8) { lblMortiP1.classList.add('pericolo'); }
+
+                if (this.player.morti >= 10) { 
+                    globalGameOverTimer = 150; 
+                } else {
+                    this.player.testoMorte = INSULTI_ARCADE[Math.floor(Math.random() * INSULTI_ARCADE.length)];
+                    this.player.timerTestoMorte = 60; 
+                }
+            };
+
+            LevelBase.prototype.updateCoreEngine = function() {
+                animationFrameCount++;
+                
+                if (globalGameOverTimer > 0) {
+                    globalGameOverTimer--;
+                    if (globalGameOverTimer === 0) { this.resetGameCompletely(); this.loadLevel(livelloAttuale); }
+                    return;
+                }
+                if (globalVictoryTimer > 0) {
+                    globalVictoryTimer--;
+                    if (globalVictoryTimer === 0) { tempo = 0; this.resetGameCompletely(); this.loadLevel(livelloAttuale); }
+                    return;
+                }
+                if (this.player.timerTestoMorte > 0) { this.player.update([]); return; }
+
+                let currentLevelLimit = (livelloAttuale === 3) ? WORLD_WIDTH : 3000;
+                let targetCameraX = this.player.x - CANVAS_WIDTH / 4;
+                
+                this.cameraX = targetCameraX;
+                if (this.cameraX < 0) this.cameraX = 0;
+                if (this.cameraX > currentLevelLimit - CANVAS_WIDTH) this.cameraX = currentLevelLimit - CANVAS_WIDTH;
+
+                if (this.player.x < this.cameraX) { this.processDeath(); return; }
+
+                this.player.update(this.platforms);
+
+                for (let pit of this.pitfalls) { if (pit.checkCollision(this.player)) { this.processDeath(); return; } }
+                for (let spine of this.obstacles) { if (spine.checkCollision(this.player)) { this.processDeath(); return; } }
+                if (this.player.y > CANVAS_HEIGHT) { this.processDeath(); return; }
+
+                this.coins.forEach(coin => {
+                    if (coin.checkCollision(this.player)) { coin.collected = true; punti += 10; lblPunti.innerText = punti; }
+                });
+
+                if (this.goal.checkCollision(this.player)) {
+                    punti += 100; lblPunti.innerText = punti;
+                    if (livelloAttuale < 3) {
+                        livelloAttuale++; lblLivello.innerText = livelloAttuale; this.loadLevel(livelloAttuale);
+                    } else {
+                        riepilogoVittoria = { punti: punti, tempo: tempo, morti: this.player.morti };
+                        globalVictoryTimer = 240; 
+                    }
+                }
+            };
+        }
+
+        // --- EXTENSION GENERATORE LIVELLI (LEVELGENERATOR) ---
+        if (typeof LevelGenerator !== 'undefined') {
+            const originalLoadLevel = LevelGenerator.prototype.loadLevel;
+            LevelGenerator.prototype.loadLevel = function(id) {
+                originalLoadLevel.call(this, id);
+                trexes = []; arrows = []; rockets = []; shootCooldown = 0;
+                stormClouds = []; lightnings = [];
+               
+                if (id === 2) {
+                    hasBow = false; hasBazooka = false;
+                    unlockedBowInventory = false; unlockedBazookaInventory = false;
+                    arrowAmmo = 5; 
+                    bowItem = new BowItem(210, 205);
+                    bazookaItem = null;
+                    lvl2CloudsX = [50, 320, 600, 900];
+                } else if (id === 1) {
+                    hasBow = false; hasBazooka = false; bowItem = null; bazookaItem = null;
+                    unlockedBowInventory = false; unlockedBazookaInventory = false;
+                } else if (id === 3) {
+                    bazookaItem = new BazookaItem(1310, 65);
+                    stormClouds.push(new StormCloud(500, 30, 490, 1000));
+                    stormClouds.push(new StormCloud(1100, 45, 1030, 1600));
+                    stormClouds.push(new StormCloud(1700, 35, 1570, 2200));
+                    stormClouds.push(new StormCloud(2300, 40, 2110, 2800));
+                }
+
+                this.initTimer();
+
+                const dati = livelliDatiStatici[id];
+                if (dati && dati.enemies) {
+                    dati.enemies.forEach(e => { trexes.push(new TRexEnemy(e.type, e.x, e.floorY, e.minX, e.maxX)); });
+                }
+               
+                this.refreshWeaponHUD();
+            };
+
+            LevelGenerator.prototype.refreshWeaponHUD = function() {
+                if (hasBow || hasBazooka) {
+                    if (uiFrecce) uiFrecce.style.display = 'block';
+                    if (lblFrecce) lblFrecce.innerText = hasBazooka ? `${rocketAmmo} 🚀` : arrowAmmo;
+                } else {
+                    if (uiFrecce) uiFrecce.style.display = 'none';
+                }
+            };
+
+            LevelGenerator.prototype.updateCoreEngine = function() {
+                LevelBase.prototype.updateCoreEngine.call(this);
+                if (!this.player || this.player.timerTestoMorte > 0 || globalGameOverTimer > 0 || globalVictoryTimer > 0) return;
+
+                if (livelloAttuale === 2 && bowItem) bowItem.checkPickup(this.player);
+                if (livelloAttuale === 3 && bazookaItem) bazookaItem.checkPickup(this.player);
+
+                if (livelloAttuale === 2) {
+                    for (let c = 0; c < lvl2CloudsX.length; c++) {
+                        lvl2CloudsX[c] -= 0.5; if (lvl2CloudsX[c] < -170) lvl2CloudsX[c] = CANVAS_WIDTH + 20;
+                    }
+                }
+
+                if (livelloAttuale === 3) {
+                    stormClouds.forEach(cloud => cloud.update());
+                    for (let i = lightnings.length - 1; i >= 0; i--) {
+                        let bolt = lightnings[i]; bolt.update();
+                        if (bolt.checkCollision(this.player)) { this.processDeath(); break; }
+                        if (bolt.y > CANVAS_HEIGHT) lightnings.splice(i, 1);
+                    }
+                }
+
+                if ((keys['e'] || keys['E'] || keys['KeyE']) && hasBow && shootCooldown === 0 && arrowAmmo > 0) {
+                    let dir = (this.player.direzione === 'destra') ? 1 : -1;
+                    let spawnX = (dir === 1) ? (this.player.x - 4) : (this.player.x + this.player.width - 14);
+                    arrows.push(new ArrowProjectile(spawnX, this.player.y + 14, dir, Math.random() < 0.20 ? 'fire' : 'normal'));
+                    shootCooldown = MAX_COOLDOWN; arrowAmmo--;
+                    this.refreshWeaponHUD();
+                }
+
+                if ((keys['q'] || keys['Q'] || keys['KeyQ']) && hasBazooka && shootCooldown === 0 && rocketAmmo > 0) {
+                    let dir = (this.player.direzione === 'destra') ? 1 : -1;
+                    let spawnX = (dir === 1) ? (this.player.x + 14) : (this.player.x - 20);
+                    rockets.push(new RocketProjectile(spawnX, this.player.y + 12, dir));
+                    shootCooldown = MAX_COOLDOWN + 20; rocketAmmo--;
+                    
+                    if (rocketAmmo === 0) {
+                        hasBazooka = false; hasBow = unlockedBowInventory; 
+                    }
+                    this.refreshWeaponHUD();
+                }
+               
+                if (shootCooldown > 0) {
+                    shootCooldown--;
+                    if (shootCooldown === 0) { this.refreshWeaponHUD(); }
+                }
+
+                for (let i = rockets.length - 1; i >= 0; i--) {
+                    let rocket = rockets[i]; rocket.update();
+                    for (let trex of trexes) {
+                        if (!trex.isDead && rocket.x < trex.x + trex.w && rocket.x + rocket.w > trex.x && rocket.y < trex.y + trex.h && rocket.y + rocket.h > trex.y) {
+                            trex.hp -= trex.isBoss ? 25 : 10; trex.hurtTimer = 20; rocket.toRemove = true;
+                            if (trex.hp <= 0) { trex.isDead = true; punti += trex.isBoss ? 500 : (trex.type === 'red' ? 50 : 100); lblPunti.innerText = punti; }
+                            break;
+                        }
+                    }
+                    if (rocket.x < this.cameraX || rocket.x > this.cameraX + CANVAS_WIDTH || rocket.toRemove) rockets.splice(i, 1);
+                }
+
+                for (let i = arrows.length - 1; i >= 0; i--) {
+                    let arrow = arrows[i]; arrow.update();
+                    for (let trex of trexes) {
+                        if (!trex.isDead && arrow.x < trex.x + trex.w && arrow.x + arrow.w > trex.x && arrow.y < trex.y + trex.h && arrow.y + arrow.h > trex.y) {
+                            trex.hp -= (trex.isBoss) ? (arrow.type === 'fire' ? 6.25 : 5) : 1; trex.hurtTimer = 15; arrow.toRemove = true;
+                            if (trex.hp <= 0) { trex.isDead = true; punti += trex.isBoss ? 500 : (trex.type === 'red' ? 50 : 100); lblPunti.innerText = punti; }
+                            break;
+                        }
+                    }
+                    if (arrow.x < this.cameraX || arrow.x > this.cameraX + CANVAS_WIDTH || arrow.toRemove) arrows.splice(i, 1);
+                }
+
+                trexes.forEach(trex => {
+                    trex.update(this.player.x);
+                    if (trex.checkCollision(this.player)) this.processDeath();
+                });
+            };
+
+            LevelGenerator.prototype.drawCoreEngine = function() {
+                ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+                // --- RENDERING BACKGROUND SCENICI ---
+                if (livelloAttuale === 1) {
+                    let skyGrad = ctx.createLinearGradient(0, 0, 0, CANVAS_HEIGHT);
+                    skyGrad.addColorStop(0, '#70a1ff'); skyGrad.addColorStop(1, '#e0f6ff');
+                    ctx.fillStyle = skyGrad; ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+                   
+                    // Raggi Solari Rotanti Stratificati
+                    ctx.save(); 
+                    ctx.translate(684, 64); 
+                    ctx.rotate(animationFrameCount * 0.012);
+                    ctx.fillStyle = 'rgba(255, 188, 66, 0.25)';
+                    let rayLength = 85 + Math.sin(animationFrameCount * 0.08) * 8;
+                    for (let r = 0; r < 4; r++) { 
+                        ctx.rotate(Math.PI / 2); 
+                        ctx.fillRect(-rayLength / 2, -6, rayLength, 12); 
+                    }
+                    ctx.restore();
+
+                    // Sole Rotondo con Corona di Pixel Art
+                    ctx.fillStyle = '#ff9f43';
+                    ctx.beginPath(); ctx.arc(684, 64, 28, 0, Math.PI * 2); ctx.fill();
+                    ctx.fillStyle = '#f1c40f';
+                    ctx.beginPath(); ctx.arc(684, 64, 22, 0, Math.PI * 2); ctx.fill();
+                    ctx.fillStyle = '#fff200';
+                    ctx.beginPath(); ctx.arc(684, 64, 15, 0, Math.PI * 2); ctx.fill();
+                   
+                    // Nuvole Fluffose Stratificate del Livello 1 (Composte da agglomerati di rettangoli)
+                    ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+                    // Nuvola 1
+                    ctx.fillRect(100, 70, 100, 20); ctx.fillRect(115, 58, 70, 20); ctx.fillRect(130, 48, 40, 20);
+                    // Nuvola 2
+                    ctx.fillRect(400, 95, 130, 25); ctx.fillRect(420, 80, 95, 25); ctx.fillRect(445, 68, 50, 25);
+                }
+                else if (livelloAttuale === 2) {
+                    let skyGrad = ctx.createLinearGradient(0, 0, 0, CANVAS_HEIGHT);
+                    skyGrad.addColorStop(0, '#57606f'); skyGrad.addColorStop(1, '#a4b0be');
+                    ctx.fillStyle = skyGrad; ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+                   
+                    // Nuvole di Tempesta Semoventi Stratificate (Grigie Cupo con Ombre)
+                    for (let cx of lvl2CloudsX) {
+                        ctx.fillStyle = '#2f3542'; // Ombra scura inferiore
+                        ctx.fillRect(cx, 75, 160, 30);
+                        ctx.fillStyle = '#57606f'; // Corpo intermedio
+                        ctx.fillRect(cx + 15, 60, 130, 25);
+                        ctx.fillStyle = '#747d8c'; // Cresta superiore illuminata
+                        ctx.fillRect(cx + 35, 48, 90, 20);
+                    }
+                }
+                else if (livelloAttuale === 3) {
+                    let hellGrad = ctx.createLinearGradient(0, 0, 0, CANVAS_HEIGHT);
+                    hellGrad.addColorStop(0, '#0c0303'); hellGrad.addColorStop(0.7, '#4a0000'); hellGrad.addColorStop(1, '#800000');
+                    ctx.fillStyle = hellGrad; ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+                   
+                    // IL CAPOLAVORO: LA LUNA ROSSA ECLISSATA (BLOOD MOON)
+                    let moonX = 680, moonY = 80;
+                    let pulseRadius = Math.sin(animationFrameCount * 0.04) * 3;
+                    
+                    // Alone Magmatico Esterno Pulsante
+                    ctx.fillStyle = 'rgba(231, 76, 60, 0.25)';
+                    ctx.beginPath(); ctx.arc(moonX, moonY, 44 + pulseRadius, 0, Math.PI * 2); ctx.fill();
+                    
+                    // Corpo Principale della Luna Cremisi
+                    ctx.fillStyle = '#c0392b';
+                    ctx.beginPath(); ctx.arc(moonX, moonY, 30, 0, Math.PI * 2); ctx.fill();
+                    
+                    // Dettagli e Crateri d'Ombra Superficiali
+                    ctx.fillStyle = '#7f1d1d';
+                    ctx.beginPath(); ctx.arc(moonX - 10, moonY - 8, 6, 0, Math.PI * 2); ctx.fill();
+                    ctx.beginPath(); ctx.arc(moonX + 12, moonY + 10, 4, 0, Math.PI * 2); ctx.fill();
+                    ctx.beginPath(); ctx.arc(moonX - 4, moonY + 14, 5, 0, Math.PI * 2); ctx.fill();
+                    ctx.fillRect(moonX + 8, moonY - 12, 6, 4);
+
+                    // Catena montuosa vulcanica sottostante con scintille
+                    ctx.fillStyle = '#1c0606'; ctx.beginPath();
+                    ctx.moveTo(0, 380); ctx.lineTo(120, 220); ctx.lineTo(240, 380); ctx.lineTo(380, 180); ctx.lineTo(520, 380); ctx.closePath(); ctx.fill();
+                    
+                    ctx.fillStyle = '#ff4757';
+                    for (let i = 0; i < CANVAS_WIDTH; i += 40) {
+                        let sparkH = Math.sin((animationFrameCount / 10) + i) * 15;
+                        ctx.fillRect(i, 380 - sparkH, 15, sparkH + 20);
+                    }
+                }
+
+                ctx.save(); ctx.translate(-this.cameraX, 0);
+                this.platforms.forEach(p => p.draw(ctx)); this.pitfalls.forEach(pit => pit.draw(ctx));
+                this.obstacles.forEach(o => o.draw(ctx)); this.coins.forEach(c => c.draw(ctx)); this.goal.draw(ctx);
+
+                if (livelloAttuale === 2 && bowItem) bowItem.draw(ctx);
+                if (livelloAttuale === 3 && bazookaItem) bazookaItem.draw(ctx);
+                
+                arrows.forEach(arrow => arrow.draw(ctx));
+                rockets.forEach(rocket => rocket.draw(ctx));
+               
+                if (livelloAttuale === 3) { stormClouds.forEach(cloud => cloud.draw(ctx)); lightnings.forEach(bolt => bolt.draw(ctx)); }
+                trexes.forEach(trex => trex.draw(ctx));
+                
+                if (this.player.timerTestoMorte === 0 && globalGameOverTimer === 0 && globalVictoryTimer === 0) { this.player.draw(ctx); }
+                ctx.restore();
+
+                if (this.player.timerTestoMorte === 0 && globalGameOverTimer === 0 && globalVictoryTimer === 0) {
+                    let playerBobbingY = (this.player.isWalking && this.player.grounded) ? Math.abs(Math.sin(animationFrameCount * 0.25)) * 4 : 0;
+
+                    if (hasBow) {
+                        ctx.strokeStyle = '#d35400'; ctx.lineWidth = 2; ctx.beginPath();
+                        if (this.player.direzione === 'destra') {
+                            ctx.arc(this.player.x - this.cameraX - 4, this.player.y + 18 + playerBobbingY, 8, -Math.PI/2, Math.PI/2);
+                        } else {
+                            ctx.arc(this.player.x - this.cameraX + this.player.width + 4, this.player.y + 18 + playerBobbingY, 8, Math.PI/2, -Math.PI/2);
+                        }
+                        ctx.stroke();
+                    }
+                    else if (hasBazooka) {
+                        ctx.fillStyle = '#4b6584'; 
+                        if (this.player.direzione === 'destra') { ctx.fillRect(this.player.x - this.cameraX - 10, this.player.y + 12 + playerBobbingY, 24, 6); } 
+                        else { ctx.fillRect(this.player.x - this.cameraX + this.player.width - 14, this.player.y + 12 + playerBobbingY, 24, 6); }
+                    }
+                }
+               
+                ctx.save(); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                if (this.player.testoMorte !== "" && globalGameOverTimer === 0 && globalVictoryTimer === 0) {
+                    ctx.fillStyle = '#ff4757'; ctx.font = "bold 64px 'Impact'"; ctx.fillText(this.player.testoMorte, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
+                }
+                else if (globalGameOverTimer > 0) {
+                    ctx.fillStyle = "rgba(16, 16, 30, 0.85)"; ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+                    ctx.fillStyle = '#ff3333'; ctx.font = "bold 72px 'Impact'"; ctx.fillText("GAME OVER", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
+                }
+                else if (globalVictoryTimer > 0) {
+                    ctx.fillStyle = "rgba(10, 25, 15, 0.9)"; ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+                    ctx.fillStyle = '#00ff66'; ctx.font = "bold 76px 'Impact'"; ctx.fillText("VICTORY! 👑", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 40);
+                    ctx.fillStyle = '#ffffff'; ctx.font = "16px 'Courier New'";
+                    ctx.fillText(`PUNTI FINALI: ${punti} | TEMPO: ${tempo}s`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 50);
+                }
+                ctx.restore();
+            };
+        }
+
+        if (typeof LavaTrap !== 'undefined') {
+            LavaTrap.prototype.draw = function(ctx) {
+                const pixelSize = 6;
+                ctx.fillStyle = '#3a0000'; ctx.fillRect(this.x, this.floorY, this.w, CANVAS_HEIGHT - this.floorY);
+                ctx.fillStyle = '#d32f2f'; ctx.fillRect(this.x, this.floorY, this.w, 10);
+
+                for (let xOffset = 0; xOffset < this.w; xOffset += pixelSize) {
+                    let currentX = this.x + xOffset;
+                    let waveFactor = Math.sin((animationFrameCount / 4) + currentX * 0.05) * 12;
+                    let noise = Math.cos((animationFrameCount / 2) + currentX) * 4;
+                    let maxFlameHeight = 75 + waveFactor + noise;
+
+                    for (let yOffset = 0; yOffset < maxFlameHeight; yOffset += pixelSize) {
+                        let currentY = this.floorY - yOffset; 
+                        let lifeRatio = yOffset / maxFlameHeight;
+                        
+                        if (lifeRatio < 0.35) ctx.fillStyle = (animationFrameCount + currentX + currentY) % 6 < 3 ? '#ffffff' : '#f1c40f';
+                        else if (lifeRatio < 0.70) ctx.fillStyle = '#e67e22';
+                        else if (lifeRatio < 0.92) ctx.fillStyle = '#e74c3c';
+                        else ctx.fillStyle = (animationFrameCount + currentX) % 4 === 0 ? '#962d22' : 'transparent';
+                        
+                        if (ctx.fillStyle !== 'transparent') ctx.fillRect(currentX, currentY, pixelSize, pixelSize);
+                    }
+                }
+            };
+
+            LavaTrap.prototype.checkCollision = function(player) {
+                if (player.timerTestoMorte > 0 || globalGameOverTimer > 0 || globalVictoryTimer > 0) return false;
+                if (player.x + player.width > this.x && player.x < this.x + this.w) {
+                    let colstartX = Math.max(this.x, player.x); 
+                    let colendX = Math.min(this.x + this.w, player.x + player.width);
+                    for (let fx = this.x; fx < this.x + this.w; fx += 6) {
+                        if (fx + 6 > colstartX && fx < colendX) {
+                            let waveFactor = Math.sin((animationFrameCount / 4) + fx * 0.05) * 12;
+                            let noise = Math.cos((animationFrameCount / 2) + fx) * 4;
+                            let maxFlameHeight = 75 + waveFactor + noise;
+                            if (player.y + player.height > this.floorY - maxFlameHeight) return true;
+                        }
+                    }
+                }
+                return false;
+            };
+        }
+    </script>
+</body>
+</html>
